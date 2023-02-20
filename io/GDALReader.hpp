@@ -61,11 +61,14 @@ private:
     virtual void initialize();
     virtual void addDimensions(PointLayoutPtr layout);
     virtual void ready(PointTableRef table);
-    virtual point_count_t read(PointViewPtr view, point_count_t num);
+    virtual point_count_t read(PointViewPtr view, point_count_t num); 
     virtual void done(PointTableRef table);
     virtual bool processOne(PointRef& point);
     virtual QuickInfo inspect();
     virtual void addArgs(ProgramArgs& args);
+
+    inline point_count_t processBlock(PointRef& point);
+    inline point_count_t processBlockBand(PointRef& point, int band, int readRow, int readCol);
 
     std::unique_ptr<gdal::Raster> m_raster;
     std::vector<Dimension::Type> m_bandTypes;
@@ -78,6 +81,11 @@ private:
     point_count_t m_index;
     int m_row;
     int m_col;
+
+    int m_blockRow;
+    int m_blockCol;
+    int m_blockWidth;
+    int m_blockHeight;
 
     BOX3D m_bounds;
     StringList m_dimNames;

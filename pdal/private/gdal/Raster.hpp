@@ -470,6 +470,8 @@ public:
     */
     GDALError read(double x, double y, std::vector<double>& data);
 
+    GDALError read(int band, int x, int y, int width, int height, std::vector<double>& data);
+
     /**
       Get a vector of dimensions that map to the bands of a raster.
     */
@@ -532,6 +534,8 @@ public:
     MetadataNode getMetadata(std::string domain="") const;
     GDALError addMetadata(std::string name, std::string value, std::string domain="");
 
+    void getBlockSize(int band, int &xSize, int &ySize) const;
+
 private:
     std::string m_filename;
 
@@ -550,7 +554,6 @@ private:
 
     mutable std::string m_errorMsg;
     mutable std::vector<pdal::Dimension::Type> m_types;
-    std::vector<std::array<double, 2>> m_block_sizes;
 
     GDALError validateType(Dimension::Type& type, GDALDriver *driver);
     bool getPixelAndLinePosition(double x, double y,

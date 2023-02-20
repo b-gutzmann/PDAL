@@ -38,6 +38,7 @@
 #include <pdal/Options.hpp>
 
 #include <functional>
+#include <chrono>
 
 namespace pdal
 {
@@ -83,7 +84,11 @@ private:
         PointViewSet viewSet;
 
         view->clearTemps();
+        auto start = std::chrono::high_resolution_clock::now();
         read(view, m_count);
+        auto end = std::chrono::high_resolution_clock::now();
+        auto time_span = std::chrono::duration_cast<std::chrono::duration<double, std::milli>>(end - start);
+        std::cout << "Reader took " << time_span.count() << " ms for " << view->size() << std::endl;
         viewSet.insert(view);
         return viewSet;
     }

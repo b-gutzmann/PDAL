@@ -559,6 +559,26 @@ GDALError Raster::read(double x, double y, std::vector<double>& data)
     return GDALError::None;
 }
 
+GDALError Raster::read(int band, int x, int y, int width, int height, std::vector<double>& data) {
+    if (!m_ds)
+    {
+        m_errorMsg = "Raster not open.";
+        return GDALError::NotOpen;
+    }
+
+    data.resize(width * height);
+
+    GDALRasterBandH b = GDALGetRasterBand(m_ds, band + 1);
+    CPLErr readResult = GDALRasterIO(b, GF_Read, x, y, width, height,
+        data.data(), width, height, GDT_Float64, 0, 0);
+    if (readResult != CE_None)
+    {
+        // TODO error
+    }
+
+    return GDALError::None;
+}
+
 
 /**
   Get the spatial reference associated with a raster.
@@ -690,6 +710,11 @@ GDALError Raster::addMetadata(std::string name,
                                      value.c_str(),
                                      domain.c_str());
     return GDALError(e);
+}
+
+void Raster::getBlockSize(int band, int &xSize, int &ySize) const
+{
+    m_ds->GetRasterBand(band + 1)->GetBlockSize(&xSize, &ySize);
 }
 
 } // namespace gdal
