@@ -82,9 +82,7 @@ void GDALReader::initialize()
 
     m_width = m_raster->width();
     m_height = m_raster->height();
-    m_blockWidth = m_width / 4;
-    m_blockHeight = m_height / 4;
-    // m_raster->getBlockSize(0, m_blockWidth, m_blockHeight);
+    m_raster->getBlockSize(0, m_blockWidth, m_blockHeight);
     m_bandTypes = m_raster->getPDALDimensionTypes();
     m_metadata.add(m_raster->getMetadata());
 
@@ -187,10 +185,15 @@ point_count_t GDALReader::read(PointViewPtr view, point_count_t numPts)
 
     std::cout << view->layout()->dimDetail(m_bandIds[0])->type() << std::endl;
 
+    Block block;
     while (cnt < numPts)
     {
-        PointRef point(*view, view->size());
-        point_count_t processed = processBlock(point);
+        if (readBlock(block) == false) {
+            break;
+        }
+
+        point_count_t processed = processBlock(view, block);
+
         if (processed <= 0)
         {
             std::cout << "Processed 0 exiting early " << cnt << " " << numPts << std::endl;
@@ -201,26 +204,29 @@ point_count_t GDALReader::read(PointViewPtr view, point_count_t numPts)
     return cnt;
 }
 
-point_count_t GDALReader::processBlock(PointRef& point) {
+bool GDALReader::readBlock(Block& block)
+{
     int numBlocksX = (m_width + m_blockWidth - 1) / m_blockWidth;
     int numBlocksY = (m_height + m_blockHeight - 1) / m_blockHeight;
 
-    // std::cout << "processing block " << m_blockRow << " " << m_blockCol << std::endl;
-
-    point_count_t cnt = 0;
     if (m_blockRow >= numBlocksY) 
     {
-        return cnt; // done
+        return false; // done
     }
+
     int readCol = m_blockCol * m_blockWidth;
     int readRow = m_blockRow * m_blockHeight;
-    
-    PointId startPointId = point.pointId();
+
+    block.m_col = m_blockCol;
+    block.m_row = m_blockRow;
+    block.m_data.resize(m_raster->bandCount());
     for (int band = 0; band < m_raster->bandCount(); ++band)
     {
-        point.setPointId(startPointId);
-        cnt = processBlockBand(point, band, readRow, readCol);
-        // std::cout << cnt << std::endl;
+        if (m_raster->read(band, readCol, readRow, m_blockWidth, m_blockHeight, block.m_data.at(band)) != gdal::GDALError::None)
+        {
+            std::cout << "error " << std::endl;
+            return false;
+        }
     }
 
     m_blockCol++;
@@ -229,44 +235,47 @@ point_count_t GDALReader::processBlock(PointRef& point) {
         m_blockCol = 0;
         m_blockRow++;
     }
-    return cnt;
+
+    return true;
 }
 
-point_count_t GDALReader::processBlockBand(PointRef& point, int band, int readRow, int readCol) {
+point_count_t GDALReader::processBlock(PointViewPtr view, const Block& block)
+{
+    // std::cout << "processing block " << m_blockRow << " " << m_blockCol << std::endl;
     point_count_t cnt = 0;
 
-    std::vector<double> bandData;
-    if (m_raster->read(band, readCol, readRow, m_blockWidth, m_blockHeight, bandData) != gdal::GDALError::None)
-    {
-        std::cout << "error " << std::endl;
-        return false;
-    }
-
-    PointId pointId = point.pointId();
-    Dimension::Id id = m_bandIds[band];
+    int readCol = block.m_col * m_blockWidth;
+    int readRow = block.m_row * m_blockHeight;
+    
     for (int rowOffset = 0; rowOffset < m_blockHeight; ++rowOffset)
     {
         int row = rowOffset + readRow;
-        if (row > m_height) 
-             break;
+        // We need to check for invalid indices because block sizes don't have to divive the raster size evenly
+        if (row >= m_height)
+        {
+            break;
+        }   
 
         for (int colOffset = 0; colOffset < m_blockWidth; ++colOffset)
         {
             int col = colOffset + readCol;
-            if (col > m_width)
-                break;
-
-            point.setPointId(pointId);
-            std::cout << pointId << std::endl;
-            if (band == 0)
+            // We need to check for invalid indices because block sizes don't have to divive the raster size evenly
+            if (col >= m_width)
             {
-                std::array<double, 2> coords;
-                m_raster->pixelToCoord(col, row, coords);
-                point.setField(Dimension::Id::X, coords[0]);
-                point.setField(Dimension::Id::Y, coords[1]);
+                break;
             }
-            point.setField(id, bandData.at((rowOffset * m_blockWidth) + colOffset));
-            pointId++;
+
+            PointRef point = view->point(view->size());
+            std::array<double, 2> coords;
+            m_raster->pixelToCoord(col, row, coords);
+            point.setField(Dimension::Id::X, coords[0]);
+            point.setField(Dimension::Id::Y, coords[1]);
+            for (int band = 0; band < block.m_data.size(); ++band)
+            {
+                Dimension::Id id = m_bandIds[band];
+                point.setField(id, block.m_data.at(band).at((rowOffset * m_blockWidth) + colOffset));
+            }
+            
             cnt++;
         }
     }

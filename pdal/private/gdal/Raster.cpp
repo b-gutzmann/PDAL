@@ -568,13 +568,21 @@ GDALError Raster::read(int band, int x, int y, int width, int height, std::vecto
 
     data.resize(width * height);
 
-    GDALRasterBandH b = GDALGetRasterBand(m_ds, band + 1);
-    CPLErr readResult = GDALRasterIO(b, GF_Read, x, y, width, height,
-        data.data(), width, height, GDT_Float64, 0, 0);
-    if (readResult != CE_None)
-    {
-        // TODO error
+    int validHeight = height;
+    if (y + height > this->height()) {
+        validHeight = this->height() - y;
     }
+    
+    int validWidth = width;
+    if (x + width > this->width()) {
+        validWidth = this->width() - x;
+    }
+
+    int nPixelSpace = 0;
+    int nLineSpace = sizeof(double) * width;
+    GDALRasterBandH b = GDALGetRasterBand(m_ds, band + 1);
+    CPLErr readResult = GDALRasterIO(b, GF_Read, x, y, validWidth, validHeight,
+        data.data(), validWidth, validHeight, GDT_Float64, nPixelSpace, nLineSpace);
 
     return GDALError::None;
 }

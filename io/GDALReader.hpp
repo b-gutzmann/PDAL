@@ -58,6 +58,12 @@ public:
     ~GDALReader();
 
 private:
+    struct Block {
+        std::vector<std::vector<double>> m_data;
+        int m_col;
+        int m_row;
+    };
+
     virtual void initialize();
     virtual void addDimensions(PointLayoutPtr layout);
     virtual void ready(PointTableRef table);
@@ -67,8 +73,8 @@ private:
     virtual QuickInfo inspect();
     virtual void addArgs(ProgramArgs& args);
 
-    inline point_count_t processBlock(PointRef& point);
-    inline point_count_t processBlockBand(PointRef& point, int band, int readRow, int readCol);
+    bool readBlock(Block& block);
+    point_count_t processBlock(PointViewPtr view, const Block& block);
 
     std::unique_ptr<gdal::Raster> m_raster;
     std::vector<Dimension::Type> m_bandTypes;
