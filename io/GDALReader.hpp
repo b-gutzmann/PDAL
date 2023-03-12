@@ -58,10 +58,36 @@ public:
     ~GDALReader();
 
 private:
-    struct Block {
-        std::vector<std::vector<double>> m_data;
-        int m_col;
-        int m_row;
+    class BlockReader
+    {
+    public:
+        BlockReader(GDALReader& reader);
+        void initialize();
+        point_count_t processBlock(PointViewPtr view);
+        bool processOne(PointRef& point);
+
+    private:
+        struct Block
+        {
+            std::vector<std::vector<double>> m_data;
+            int m_blockCol;
+            int m_blockRow;
+        };
+
+        bool readBlock();
+
+        GDALReader& m_reader;
+        int m_blockRow;
+        int m_blockCol;
+        int m_blockWidth;
+        int m_blockHeight;
+        int m_numBlocksX;
+        int m_numBlocksY;
+        
+        Block m_currentBlock;
+        bool m_needsRead;
+        int m_colInBlock;
+        int m_rowInBlock;
     };
 
     virtual void initialize();
@@ -73,9 +99,6 @@ private:
     virtual QuickInfo inspect();
     virtual void addArgs(ProgramArgs& args);
 
-    bool readBlock(Block& block);
-    point_count_t processBlock(PointViewPtr view, const Block& block);
-
     std::unique_ptr<gdal::Raster> m_raster;
     std::vector<Dimension::Type> m_bandTypes;
     std::vector<Dimension::Id> m_bandIds;
@@ -84,14 +107,8 @@ private:
     int m_width;
     int m_height;
     bool m_useMemoryCopy;
-    point_count_t m_index;
-    int m_row;
-    int m_col;
 
-    int m_blockRow;
-    int m_blockCol;
-    int m_blockWidth;
-    int m_blockHeight;
+    BlockReader m_blockReader;
 
     BOX3D m_bounds;
     StringList m_dimNames;

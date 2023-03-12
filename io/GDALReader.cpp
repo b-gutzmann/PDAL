@@ -62,7 +62,7 @@ std::string GDALReader::getName() const
 
 
 GDALReader::GDALReader()
-    : m_index(0)
+    : m_blockReader(*this)
 {}
 
 GDALReader::~GDALReader()
@@ -82,10 +82,9 @@ void GDALReader::initialize()
 
     m_width = m_raster->width();
     m_height = m_raster->height();
-    m_raster->getBlockSize(0, m_blockWidth, m_blockHeight);
     m_bandTypes = m_raster->getPDALDimensionTypes();
     m_metadata.add(m_raster->getMetadata());
-
+    m_blockReader.initialize();
 
     m_dimNames.clear();
     if (m_header.size())
@@ -171,66 +170,78 @@ void GDALReader::ready(PointTableRef table)
                 "copy.  Using standard interface.";
     }
 
-    m_index = 0;
-    m_row = 0;
-    m_col = 0;
-    m_blockRow = 0;
-    m_blockCol = 0;
+    m_blockReader.initialize();
 }
-
 
 point_count_t GDALReader::read(PointViewPtr view, point_count_t numPts)
 {
     point_count_t cnt = 0;
-
-    std::cout << view->layout()->dimDetail(m_bandIds[0])->type() << std::endl;
-
-    Block block;
     while (cnt < numPts)
     {
-        if (readBlock(block) == false) {
+        point_count_t processed = m_blockReader.processBlock(view);
+        if (processed == 0) 
             break;
-        }
-
-        point_count_t processed = processBlock(view, block);
-
-        if (processed <= 0)
-        {
-            std::cout << "Processed 0 exiting early " << cnt << " " << numPts << std::endl;
-            break;
-        }
         cnt += processed;
+        // PointRef point = view->point(view->size());
+        // if (!processOne(point))
+        //     break;
+        // cnt++;
     }
     return cnt;
 }
 
-bool GDALReader::readBlock(Block& block)
+bool GDALReader::processOne(PointRef& point)
 {
-    int numBlocksX = (m_width + m_blockWidth - 1) / m_blockWidth;
-    int numBlocksY = (m_height + m_blockHeight - 1) / m_blockHeight;
+    return m_blockReader.processOne(point);
+}
 
-    if (m_blockRow >= numBlocksY) 
+
+void GDALReader::done(PointTableRef table)
+{
+    m_raster->close();
+}
+
+GDALReader::BlockReader::BlockReader(GDALReader& reader): m_reader(reader) {}
+
+void GDALReader::BlockReader::initialize() {
+    m_blockCol = 0;
+    m_blockRow = 0;
+    m_reader.m_raster->getBlockSize(0, m_blockWidth, m_blockHeight);
+    m_numBlocksX = (m_reader.m_width + m_blockWidth - 1) / m_blockWidth;
+    m_numBlocksY = (m_reader.m_height + m_blockHeight - 1) / m_blockHeight;
+    m_needsRead = true;
+    m_colInBlock = 0;
+    m_rowInBlock = 0;
+    std::cout << "block size " << m_blockWidth << " " << m_blockHeight << std::endl;
+    std::cout << "num blocks " << m_numBlocksX << " " << m_numBlocksY << std::endl;
+}
+
+bool GDALReader::BlockReader::readBlock()
+{
+    m_needsRead = false;
+    if (m_blockRow >= m_numBlocksY) 
     {
         return false; // done
     }
+    // std::cout << "reading block " << m_blockRow << " " << m_blockCol << std::endl;
+
+    m_currentBlock.m_blockCol = m_blockCol;
+    m_currentBlock.m_blockRow = m_blockRow;
+    m_currentBlock.m_data.resize(m_reader.m_raster->bandCount());
 
     int readCol = m_blockCol * m_blockWidth;
     int readRow = m_blockRow * m_blockHeight;
 
-    block.m_col = m_blockCol;
-    block.m_row = m_blockRow;
-    block.m_data.resize(m_raster->bandCount());
-    for (int band = 0; band < m_raster->bandCount(); ++band)
+    for (int band = 0; band < m_reader.m_raster->bandCount(); ++band)
     {
-        if (m_raster->read(band, readCol, readRow, m_blockWidth, m_blockHeight, block.m_data.at(band)) != gdal::GDALError::None)
+        if (m_reader.m_raster->read(band, readCol, readRow, m_blockWidth, m_blockHeight, m_currentBlock.m_data.at(band)) != gdal::GDALError::None)
         {
-            std::cout << "error " << std::endl;
             return false;
         }
     }
 
     m_blockCol++;
-    if (m_blockCol >= numBlocksX)
+    if (m_blockCol >= m_numBlocksX)
     {
         m_blockCol = 0;
         m_blockRow++;
@@ -239,86 +250,126 @@ bool GDALReader::readBlock(Block& block)
     return true;
 }
 
-point_count_t GDALReader::processBlock(PointViewPtr view, const Block& block)
+point_count_t GDALReader::BlockReader::processBlock(PointViewPtr view)
 {
-    // std::cout << "processing block " << m_blockRow << " " << m_blockCol << std::endl;
+    if (!readBlock()) {
+        return 0;
+    }
+
     point_count_t cnt = 0;
 
-    int readCol = block.m_col * m_blockWidth;
-    int readRow = block.m_row * m_blockHeight;
-    
-    for (int rowOffset = 0; rowOffset < m_blockHeight; ++rowOffset)
+    int readCol = m_currentBlock.m_blockCol * m_blockWidth;
+    int readRow =  m_currentBlock.m_blockRow * m_blockHeight;
+
+    point_count_t startPointId = view->size();
+    for (int band = 0; band < m_currentBlock.m_data.size(); ++band)
     {
-        int row = rowOffset + readRow;
-        // We need to check for invalid indices because block sizes don't have to divive the raster size evenly
-        if (row >= m_height)
+        point_count_t pointId = startPointId;
+        for (int rowInBlock = 0; rowInBlock < m_blockHeight; ++rowInBlock)
         {
-            break;
-        }   
-
-        for (int colOffset = 0; colOffset < m_blockWidth; ++colOffset)
-        {
-            int col = colOffset + readCol;
-            // We need to check for invalid indices because block sizes don't have to divive the raster size evenly
-            if (col >= m_width)
-            {
+            int row = rowInBlock + readRow;
+            // We need to check for invalid indices because block sizes don't
+            // have to divide the raster size evenly
+            if (row >= m_reader.m_height)
                 break;
-            }
 
-            PointRef point = view->point(view->size());
-            std::array<double, 2> coords;
-            m_raster->pixelToCoord(col, row, coords);
-            point.setField(Dimension::Id::X, coords[0]);
-            point.setField(Dimension::Id::Y, coords[1]);
-            for (int band = 0; band < block.m_data.size(); ++band)
+            int rowOffset = rowInBlock * m_blockWidth;
+            for (int colInBlock = 0; colInBlock < m_blockWidth; ++colInBlock)
             {
-                Dimension::Id id = m_bandIds[band];
-                point.setField(id, block.m_data.at(band).at((rowOffset * m_blockWidth) + colOffset));
+                int col = colInBlock + readCol;
+                // We need to check for invalid indices because block sizes
+                // don't have to divide the raster size evenly
+                if (col >= m_reader.m_width)
+                    break;
+
+                PointRef point = view->point(pointId);
+                if (band == 0)
+                {
+                    std::array<double, 2> coords;
+                    m_reader.m_raster->pixelToCoord(col, row, coords);
+                    point.setField(Dimension::Id::X, coords[0]);
+                    point.setField(Dimension::Id::Y, coords[1]);
+                    cnt++;
+                }
+
+                Dimension::Id id = m_reader.m_bandIds[band];
+                point.setField(id, m_currentBlock.m_data.at(band).at(
+                                       rowOffset + colInBlock));
+                pointId++;
             }
-            
-            cnt++;
         }
     }
+    
+    // for (int rowInBlock = 0; rowInBlock < m_blockHeight; ++rowInBlock)
+    // {
+    //     int row = rowInBlock + readRow;
+    //     // We need to check for invalid indices because block sizes don't have to divide the raster size evenly
+    //     if (row >= m_reader.m_height)
+    //         break;
+
+    //     int rowOffset = rowInBlock * m_blockWidth;
+    //     for (int colInBlock = 0; colInBlock < m_blockWidth; ++colInBlock)
+    //     {
+    //         int col = colInBlock + readCol;
+    //         // We need to check for invalid indices because block sizes don't have to divide the raster size evenly
+    //         if (col >= m_reader.m_width)
+    //             break;
+
+    //         PointRef point = view->point(view->size());
+    //         std::array<double, 2> coords;
+    //         m_reader.m_raster->pixelToCoord(col, row, coords);
+    //         point.setField(Dimension::Id::X, coords[0]);
+    //         point.setField(Dimension::Id::Y, coords[1]);
+    //         for (int band = 0; band < m_currentBlock.m_data.size(); ++band)
+    //         {
+    //             Dimension::Id id = m_reader.m_bandIds[band];
+    //             point.setField(id, m_currentBlock.m_data.at(band).at(rowOffset + colInBlock));
+    //         }
+    //         cnt++;
+    //     }
+    // }
 
     return cnt;
 }
 
-bool GDALReader::processOne(PointRef& point)
+bool GDALReader::BlockReader::processOne(PointRef& point)
 {
-    std::array<double, 2> coords;
-    if (m_row == m_height)
-        return false; // done
-
-    m_raster->pixelToCoord(m_col, m_row, coords);
-    double x = coords[0];
-    double y = coords[1];
-    point.setField(Dimension::Id::X, x);
-    point.setField(Dimension::Id::Y, y);
-
-    std::vector<double> data;
-    if (m_raster->read(x, y, data) != gdal::GDALError::None)
-        return false;
-
-    for (int b = 0; b < m_raster->bandCount(); ++b)
+    if (m_needsRead)
     {
-        Dimension::Id id = m_bandIds[b];
-        double v = data[b];
-        point.setField(id, v);
+        if (!readBlock())
+        {
+            return false; // done
+        }
     }
-    m_col++;
-    if (m_col == m_width)
+
+    int sample = m_currentBlock.m_blockCol * m_blockWidth + m_colInBlock;
+    int line = m_currentBlock.m_blockRow * m_blockHeight + m_rowInBlock;
+
+    std::array<double, 2> coords;
+    m_reader.m_raster->pixelToCoord(sample, line, coords);
+    point.setField(Dimension::Id::X, coords[0]);
+    point.setField(Dimension::Id::Y, coords[1]);
+    for (int band = 0; band < m_currentBlock.m_data.size(); ++band)
     {
-        m_col = 0;
-        m_row++;
+        Dimension::Id id = m_reader.m_bandIds[band];
+        point.setField(id, m_currentBlock.m_data.at(band).at(
+                               (m_rowInBlock * m_blockWidth) + m_colInBlock));
+    }
+
+    m_colInBlock++;
+    // Need to check if col in block or col in raster is out of bounds
+    if (m_colInBlock >= m_blockWidth || sample + 1 >= m_reader.m_width) {
+        m_colInBlock = 0;
+        m_rowInBlock++;
+        // Need to check if row in block or row in raster is out of bounds
+        if (m_rowInBlock >= m_blockHeight || line + 1 >= m_reader.m_height) {
+            // end of block, need to read a new block
+            m_rowInBlock = 0;
+            m_needsRead = true;
+        }
     }
 
     return true;
-}
-
-
-void GDALReader::done(PointTableRef table)
-{
-    m_raster->close();
 }
 
 } // namespace pdal
