@@ -559,14 +559,12 @@ GDALError Raster::read(double x, double y, std::vector<double>& data)
     return GDALError::None;
 }
 
-GDALError Raster::read(int band, int x, int y, int width, int height, std::vector<double>& data) {
+GDALError Raster::read(int band, int x, int y, int width, int height, std::vector<uint8_t>& data, int& sampleSizeBytes) {
     if (!m_ds)
     {
         m_errorMsg = "Raster not open.";
         return GDALError::NotOpen;
     }
-
-    data.resize(width * height);
 
     int validHeight = height;
     if (y + height > this->height()) {
@@ -581,8 +579,11 @@ GDALError Raster::read(int band, int x, int y, int width, int height, std::vecto
     int nPixelSpace = 0;
     int nLineSpace = sizeof(double) * width;
     GDALRasterBandH b = GDALGetRasterBand(m_ds, band + 1);
+    GDALDataType dataType = GDALGetRasterDataType(b);
+    sampleSizeBytes = GDALGetDataTypeSizeBytes(dataType);
+    data.resize(width * height * sampleSizeBytes);
     CPLErr readResult = GDALRasterIO(b, GF_Read, x, y, validWidth, validHeight,
-        data.data(), validWidth, validHeight, GDT_Float64, nPixelSpace, nLineSpace);
+        data.data(), validWidth, validHeight, dataType, nPixelSpace, nLineSpace);
 
     return GDALError::None;
 }

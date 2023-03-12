@@ -470,7 +470,18 @@ public:
     */
     GDALError read(double x, double y, std::vector<double>& data);
 
-    GDALError read(int band, int x, int y, int width, int height, std::vector<double>& data);
+    /**
+     Read a block of data for a band into a vector of bytes.
+
+     \param band Band to read.
+     \param x X position to start read.
+     \param y Y position to start read.
+     \param width How many pixels to read in the X direction.
+     \param height How many pixels to read in the Y direction.
+     \param data Vector in which to store data.
+     \param dataSizeBytes Ouput size of sample in bytes
+    */
+    GDALError read(int band, int x, int y, int width, int height, std::vector<uint8_t>& data, int& sampleSizeBytes);
 
     /**
       Get a vector of dimensions that map to the bands of a raster.

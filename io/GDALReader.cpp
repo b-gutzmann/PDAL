@@ -234,7 +234,10 @@ bool GDALReader::BlockReader::readBlock()
 
     for (int band = 0; band < m_reader.m_raster->bandCount(); ++band)
     {
-        if (m_reader.m_raster->read(band, readCol, readRow, m_blockWidth, m_blockHeight, m_currentBlock.m_data.at(band)) != gdal::GDALError::None)
+        if (m_reader.m_raster->read(
+                band, readCol, readRow, m_blockWidth, m_blockHeight,
+                m_currentBlock.m_data.at(band).first,
+                m_currentBlock.m_data.at(band).second) != gdal::GDALError::None)
         {
             return false;
         }
@@ -264,6 +267,7 @@ point_count_t GDALReader::BlockReader::processBlock(PointViewPtr view)
     point_count_t startPointId = view->size();
     for (int band = 0; band < m_currentBlock.m_data.size(); ++band)
     {
+        auto& bandBlock = m_currentBlock.m_data.at(band);
         point_count_t pointId = startPointId;
         for (int rowInBlock = 0; rowInBlock < m_blockHeight; ++rowInBlock)
         {
@@ -293,8 +297,10 @@ point_count_t GDALReader::BlockReader::processBlock(PointViewPtr view)
                 }
 
                 Dimension::Id id = m_reader.m_bandIds[band];
-                point.setField(id, m_currentBlock.m_data.at(band).at(
-                                       rowOffset + colInBlock));
+                Dimension::Type type = m_reader.m_bandTypes[band];
+                point.setField(id, type,
+                               &bandBlock.first.at((rowOffset + colInBlock) *
+                                                   bandBlock.second));
                 pointId++;
             }
         }
@@ -351,9 +357,13 @@ bool GDALReader::BlockReader::processOne(PointRef& point)
     point.setField(Dimension::Id::Y, coords[1]);
     for (int band = 0; band < m_currentBlock.m_data.size(); ++band)
     {
+        auto& bandBlock = m_currentBlock.m_data.at(band);
         Dimension::Id id = m_reader.m_bandIds[band];
-        point.setField(id, m_currentBlock.m_data.at(band).at(
-                               (m_rowInBlock * m_blockWidth) + m_colInBlock));
+        Dimension::Type type = m_reader.m_bandTypes[band];
+        int rowOffset = m_rowInBlock * m_blockWidth;
+        point.setField(
+            id, type,
+            &bandBlock.first.at((rowOffset + m_colInBlock) * bandBlock.second));
     }
 
     m_colInBlock++;

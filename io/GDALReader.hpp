@@ -69,7 +69,7 @@ private:
     private:
         struct Block
         {
-            std::vector<std::vector<double>> m_data;
+            std::vector<std::pair<std::vector<uint8_t>, int>> m_data;
             int m_blockCol;
             int m_blockRow;
         };
